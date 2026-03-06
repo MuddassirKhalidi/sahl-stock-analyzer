@@ -74,6 +74,11 @@ export function Dashboard() {
   const [netCash, setNetCash] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [reportLoading, setReportLoading] = useState(false)
+  const [reportMessage, setReportMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
+  const [email, setEmail] = useState<string | null>(null)
+
+  const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL as string | undefined
 
   const totalMarketValue = holdings.reduce((sum, h) => sum + h.marketValue, 0)
   const netAssets = netCash + totalMarketValue
@@ -94,6 +99,7 @@ export function Dashboard() {
       if (historyRes.error) throw historyRes.error
 
       setNetCash(summaryRes.data?.net_cash ?? 0)
+      setEmail(summaryRes.data?.email ?? null)
 
       setHoldings(
         (positionsRes.data ?? []).map((p: Tables<"positions">) => ({
@@ -265,6 +271,38 @@ export function Dashboard() {
     }
   }
 
+  const handleSendAnalysisReport = async () => {
+    if (!portfolioId || !webhookUrl?.trim()) {
+      setReportMessage({ type: "error", text: "Webhook URL not configured." })
+      return
+    }
+    setReportLoading(true)
+    setReportMessage(null)
+    try {
+      const res = await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          portfolioId,
+          email: email ?? undefined,
+          netCash,
+          totalMarketValue,
+          netAssets,
+          holdings,
+        }),
+      })
+      if (!res.ok) throw new Error(`Request failed: ${res.status}`)
+      setReportMessage({ type: "success", text: "Analysis report sent." })
+    } catch (err) {
+      setReportMessage({
+        type: "error",
+        text: err instanceof Error ? err.message : "Failed to send report",
+      })
+    } finally {
+      setReportLoading(false)
+    }
+  }
+
   if (loading) {
     return (
       <div
@@ -315,8 +353,24 @@ export function Dashboard() {
                 </span>
               </div>
             </div>
-            <Button size="lg" className="w-full sm:w-auto bg-[#8B7EC8] text-white hover:bg-[#9D8FD4]">
-              Send Analysis Report
+            {reportMessage && (
+              <p
+                className={
+                  reportMessage.type === "success"
+                    ? "text-sm text-emerald-400"
+                    : "text-sm text-rose-400"
+                }
+              >
+                {reportMessage.text}
+              </p>
+            )}
+            <Button
+              size="lg"
+              onClick={handleSendAnalysisReport}
+              disabled={reportLoading}
+              className="w-full sm:w-auto bg-[#8B7EC8] text-white hover:bg-[#9D8FD4] disabled:opacity-50"
+            >
+              {reportLoading ? "Sending…" : "Send Analysis Report"}
             </Button>
           </CardContent>
         </Card>
