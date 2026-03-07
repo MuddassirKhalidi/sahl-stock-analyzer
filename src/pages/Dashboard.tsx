@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { supabase } from "@/lib/supabase"
 import type { Tables } from "@/types/supabase"
@@ -75,10 +75,26 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [reportLoading, setReportLoading] = useState(false)
+  const [reportStatus, setReportStatus] = useState<string | null>(null)
   const [reportMessage, setReportMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
   const [email, setEmail] = useState<string | null>(null)
+  const reportTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([])
 
   const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL as string | undefined
+
+  const REPORT_STEPS: { message: string; durationMs: number }[] = [
+    { message: "Calculating Sector and Market Exposure...", durationMs: 9000 },
+    { message: "Analyzing Portfolio Hedging Strategy...", durationMs: 9000 },
+    { message: "Detecting Market Regime...", durationMs: 9000 },
+    { message: "Conducting Top-down Macro Analysis..", durationMs: 9000 },
+    { message: "Analyzing Short Squeezing..", durationMs: 9000 },
+    { message: "Reviewing Latest M&A Updates...", durationMs: 9000 },
+    { message: "Sentiment and Fundamental Analysis...", durationMs: 9000 },
+    { message: "Conducting Dividend Risk Analysis...", durationMs: 9000 },
+    { message: "Analyzing Institutional Positioning..", durationMs: 9000 },
+    { message: "Combining Findings..", durationMs: 9000 },
+    { message: "Creating and Sending Analysis Report", durationMs: 0 },
+  ]
 
   const totalMarketValue = holdings.reduce((sum, h) => sum + h.marketValue, 0)
   const netAssets = netCash + totalMarketValue
@@ -148,6 +164,13 @@ export function Dashboard() {
     }
     fetchData()
   }, [portfolioId, navigate, fetchData])
+
+  useEffect(() => {
+    return () => {
+      reportTimeoutsRef.current.forEach(clearTimeout)
+      reportTimeoutsRef.current = []
+    }
+  }, [])
 
   const handleDeposit = async (amount: number) => {
     if (!portfolioId) return
@@ -278,6 +301,17 @@ export function Dashboard() {
     }
     setReportLoading(true)
     setReportMessage(null)
+    setReportStatus(REPORT_STEPS[0].message)
+
+    reportTimeoutsRef.current = []
+    let delay = 0
+    for (let i = 0; i < REPORT_STEPS.length - 1; i++) {
+      delay += REPORT_STEPS[i].durationMs
+      const nextMessage = REPORT_STEPS[i + 1].message
+      const id = setTimeout(() => setReportStatus(nextMessage), delay)
+      reportTimeoutsRef.current.push(id)
+    }
+
     try {
       const res = await fetch(webhookUrl, {
         method: "POST",
@@ -285,21 +319,38 @@ export function Dashboard() {
         body: JSON.stringify({
           portfolioId,
           email: email ?? undefined,
+          date: new Date().toISOString().slice(0, 10),
           netCash,
           totalMarketValue,
           netAssets,
           holdings,
         }),
       })
-      if (!res.ok) throw new Error(`Request failed: ${res.status}`)
-      setReportMessage({ type: "success", text: "Analysis report sent." })
+
+      let body: { success?: boolean; message?: string } | null = null
+      const contentType = res.headers.get("content-type")
+      if (contentType?.includes("application/json")) {
+        try {
+          body = await res.json()
+        } catch {
+          // ignore parse error
+        }
+      }
+
+      const message = body?.message ?? (res.ok ? "Analysis report sent." : `Request failed: ${res.status}`)
+      const type = body?.success !== undefined ? (body.success ? "success" : "error") : (res.ok ? "success" : "error")
+
+      setReportMessage({ type, text: message })
     } catch (err) {
       setReportMessage({
         type: "error",
         text: err instanceof Error ? err.message : "Failed to send report",
       })
     } finally {
+      reportTimeoutsRef.current.forEach(clearTimeout)
+      reportTimeoutsRef.current = []
       setReportLoading(false)
+      setReportStatus(null)
     }
   }
 
@@ -353,6 +404,11 @@ export function Dashboard() {
                 </span>
               </div>
             </div>
+            {reportLoading && reportStatus && (
+              <p className="text-sm text-[#B8B8D0]">
+                {reportStatus}
+              </p>
+            )}
             {reportMessage && (
               <p
                 className={
