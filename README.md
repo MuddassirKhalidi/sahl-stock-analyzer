@@ -122,7 +122,7 @@ Save the workflow and set it to **Publish** so it can receive webhook requests.
 
 ## Contributing
 
-Contributions are welcome.
+Contributions are welcome
 
 Please read the CONTRIBUTING.md file before submitting a pull request.
 
