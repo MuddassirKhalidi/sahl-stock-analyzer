@@ -117,3 +117,18 @@ Save the workflow and set it to **Publish** so it can receive webhook requests.
 1. Connect the repo to Vercel.
 2. In the project settings, add the same environment variables: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_N8N_WEBHOOK_URL` (use the production webhook URL).
 3. Deploy. The app is available at [https://sahl-stock-analyzer.vercel.app/](https://sahl-stock-analyzer.vercel.app/).
+
+---
+
+## Contributing
+
+Contributions are welcome.
+
+Please read the CONTRIBUTING.md file before submitting a pull request.
+
+Development workflow:
+
+contributors → pull request → staging
+maintainer review → merge staging → main
+main → Vercel production deployment
+
