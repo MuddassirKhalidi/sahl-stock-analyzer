@@ -11,10 +11,10 @@ Refactor
 
 ## Checklist
 
-PR targets the staging branch
+- [ ] PR targets the staging branch
 
-Code compiles and runs locally
+- [ ] Code compiles and runs locally
 
-Documentation updated if needed
+- [ ] Documentation updated if needed
 
-No breaking changes introduced
+- [ ] No breaking changes introduced
