@@ -27,6 +27,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { Download, Copy, Check } from "lucide-react"
 
 type TransactionType = "Deposit" | "Withdraw" | "Buy" | "Sell"
 
@@ -78,6 +79,7 @@ export function Dashboard() {
   const [reportStatus, setReportStatus] = useState<string | null>(null)
   const [reportMessage, setReportMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
   const [email, setEmail] = useState<string | null>(null)
+  const [copiedTable, setCopiedTable] = useState<"holdings" | "transactions" | null>(null)
   const reportTimeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([])
 
   const webhookUrl = import.meta.env.VITE_N8N_WEBHOOK_URL as string | undefined
@@ -234,56 +236,122 @@ export function Dashboard() {
     await fetchData()
   }
 
-  const SAMPLE_PORTFOLIO_ID = "9f8e7d66-1c2f-4c8c-8a7a-2e6a1b0d1111"
+  // Utility function: Copy holdings table to clipboard
+  const copyHoldingsToClipboard = async () => {
+    const headers = ["Symbol", "Quantity", "Average Cost", "Market Value"]
+    const rows = holdings.map(h => 
+      [h.symbol, h.quantity.toString(), h.averageCost.toFixed(2), h.marketValue.toFixed(2)].join("\t")
+    )
+    const text = [headers.join("\t"), ...rows].join("\n")
+    
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedTable("holdings")
+      setTimeout(() => setCopiedTable(null), 2000)
+    } catch (err) {
+      console.error("Failed to copy:", err)
+    }
+  }
+
+  // Utility function: Download holdings as CSV
+  const downloadHoldingsAsCSV = () => {
+    const headers = ["Symbol", "Quantity", "Average Cost", "Market Value"]
+    const rows = holdings.map(h => 
+      [h.symbol, h.quantity.toString(), h.averageCost.toFixed(2), h.marketValue.toFixed(2)].join(",")
+    )
+    const csv = [headers.join(","), ...rows].join("\n")
+    
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.setAttribute("download", `holdings_${new Date().toISOString().split("T")[0]}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
+
+  // Utility function: Copy transactions table to clipboard
+  const copyTransactionsToClipboard = async () => {
+    const headers = ["Time", "Type", "Symbol", "Quantity", "Amount", "Notes"]
+    const rows = transactions.map(tx => 
+      [
+        tx.time,
+        tx.type,
+        tx.symbol || "",
+        tx.quantity?.toString() || "",
+        tx.amount.toFixed(2),
+        tx.notes || ""
+      ].join("\t")
+    )
+    const text = [headers.join("\t"), ...rows].join("\n")
+    
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedTable("transactions")
+      setTimeout(() => setCopiedTable(null), 2000)
+    } catch (err) {
+      console.error("Failed to copy:", err)
+    }
+  }
+
+  // Utility function: Download transactions as CSV
+  const downloadTransactionsAsCSV = () => {
+    const headers = ["Time", "Type", "Symbol", "Quantity", "Amount", "Notes"]
+    const rows = transactions.map(tx => 
+      [
+        tx.time,
+        tx.type,
+        tx.symbol || "",
+        tx.quantity?.toString() || "",
+        tx.amount.toFixed(2),
+        (tx.notes || "").replace(/,/g, ";") // Escape commas in notes
+      ].join(",")
+    )
+    const csv = [headers.join(","), ...rows].join("\n")
+    
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement("a")
+    link.href = url
+    link.setAttribute("download", `transactions_${new Date().toISOString().split("T")[0]}.csv`)
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  }
 
   const handleImportSample = async () => {
     if (!portfolioId) return
     try {
       setError(null)
-      const [summaryRes, positionsRes] = await Promise.all([
-        supabase
-          .from("portfolio_summary")
-          .select("*")
-          .eq("portfolio_id", SAMPLE_PORTFOLIO_ID)
-          .single(),
-        supabase
-          .from("positions")
-          .select("*")
-          .eq("portfolio_id", SAMPLE_PORTFOLIO_ID),
-      ])
+      
+      // Sample portfolio: $100,000 initial cash
+      const { error: depositErr } = await supabase.rpc("deposit_cash", {
+        p_portfolio_id: portfolioId,
+        p_amount: 100000,
+        p_notes: "Sample portfolio import",
+      })
+      if (depositErr) throw depositErr
 
-      if (summaryRes.error) throw summaryRes.error
-      if (positionsRes.error) throw positionsRes.error
+      // Sample holdings (symbol, quantity, price)
+      const sampleHoldings = [
+        { symbol: "AAPL", quantity: 50, price: 175.50 },
+        { symbol: "MSFT", quantity: 30, price: 380.00 },
+        { symbol: "GOOGL", quantity: 20, price: 140.25 },
+        { symbol: "NVDA", quantity: 15, price: 485.00 },
+        { symbol: "AMZN", quantity: 25, price: 178.50 },
+      ]
 
-      const netCash = summaryRes.data?.net_cash ?? 0
-      const positions = positionsRes.data ?? []
-
-      const costOfPositions = positions.reduce(
-        (sum, pos) => sum + (pos.quantity ?? 0) * (pos.avg_cost ?? 0),
-        0
-      )
-      const depositAmount = netCash + costOfPositions
-
-      if (depositAmount > 0) {
-        const { error: depositErr } = await supabase.rpc("deposit_cash", {
-          p_portfolio_id: portfolioId,
-          p_amount: depositAmount,
-          p_notes: "Sample portfolio import",
-        })
-        if (depositErr) throw depositErr
-      }
-
-      for (const pos of positions) {
-        const qty = pos.quantity ?? 0
-        const avgCost = pos.avg_cost ?? 0
-        if (qty <= 0 || avgCost <= 0) continue
+      for (const { symbol, quantity, price } of sampleHoldings) {
         const { error: buyErr } = await supabase.rpc("buy_stock", {
           p_portfolio_id: portfolioId,
-          p_symbol: pos.symbol,
-          p_quantity: qty,
-          p_price: avgCost,
+          p_symbol: symbol,
+          p_quantity: quantity,
+          p_price: price,
           p_fees: 0,
-          p_notes: undefined,
+          p_notes: `Sample ${symbol} position`,
         })
         if (buyErr) throw buyErr
       }
@@ -327,7 +395,7 @@ export function Dashboard() {
         }),
       })
 
-      let body: { success?: boolean; message?: string } | null = null
+      let body: { success?: boolean; message?: string; error?: string } | null = null
       const contentType = res.headers.get("content-type")
       if (contentType?.includes("application/json")) {
         try {
@@ -337,14 +405,27 @@ export function Dashboard() {
         }
       }
 
-      const message = body?.message ?? (res.ok ? "Analysis report sent." : `Request failed: ${res.status}`)
-      const type = body?.success !== undefined ? (body.success ? "success" : "error") : (res.ok ? "success" : "error")
-
-      setReportMessage({ type, text: message })
+      // Check for explicit failure in response body (n8n may return 200 even on workflow failure)
+      const hasExplicitError = body?.success === false || body?.error !== undefined
+      
+      if (!res.ok || hasExplicitError) {
+        // Request failed or workflow explicitly reported failure
+        const errorMessage = body?.message || body?.error || `Request failed: ${res.status}`
+        setReportMessage({ type: "error", text: errorMessage })
+      } else if (body?.success === true || body?.message?.includes("sent")) {
+        // Explicit success or message indicates success
+        setReportMessage({ type: "success", text: body.message || "Analysis report sent." })
+      } else {
+        // Ambiguous response - treat as error
+        setReportMessage({ 
+          type: "error", 
+          text: "Failed to send analysis report. Please try again." 
+        })
+      }
     } catch (err) {
       setReportMessage({
         type: "error",
-        text: err instanceof Error ? err.message : "Failed to send report",
+        text: err instanceof Error ? err.message : "Failed to send report. Please try again.",
       })
     } finally {
       reportTimeoutsRef.current.forEach(clearTimeout)
@@ -451,26 +532,57 @@ export function Dashboard() {
             </Card>
           ) : (
             <Card className="border-[#4B3A6B] bg-[#2D1B4E]/80">
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-[#4B3A6B]">
-                    <TableHead className="text-[#B8B8D0]">Symbol</TableHead>
-                    <TableHead className="text-[#B8B8D0]">Quantity</TableHead>
-                    <TableHead className="text-[#B8B8D0]">Average Cost</TableHead>
-                    <TableHead className="text-[#B8B8D0]">Market Value</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {holdings.map((h) => (
-                    <TableRow key={h.symbol} className="border-[#4B3A6B]">
-                      <TableCell className="font-medium text-white">{h.symbol}</TableCell>
-                      <TableCell className="text-white">{h.quantity}</TableCell>
-                      <TableCell className="text-white">{formatCurrency(h.averageCost)}</TableCell>
-                      <TableCell className="text-white">{formatCurrency(h.marketValue)}</TableCell>
+              <CardHeader className="py-4">
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-white text-base">Portfolio Holdings</CardTitle>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={copyHoldingsToClipboard}
+                      className="border-[#4B3A6B] text-[#8B7EC8] hover:bg-[#8B7EC8]/20 h-8"
+                    >
+                      {copiedTable === "holdings" ? (
+                        <Check className="h-4 w-4" />
+                      ) : (
+                        <Copy className="h-4 w-4" />
+                      )}
+                      <span className="ml-2">{copiedTable === "holdings" ? "Copied!" : "Copy"}</span>
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={downloadHoldingsAsCSV}
+                      className="border-[#4B3A6B] text-[#8B7EC8] hover:bg-[#8B7EC8]/20 h-8"
+                    >
+                      <Download className="h-4 w-4" />
+                      <span className="ml-2">CSV</span>
+                    </Button>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-[#4B3A6B]">
+                      <TableHead className="text-[#B8B8D0]">Symbol</TableHead>
+                      <TableHead className="text-[#B8B8D0]">Quantity</TableHead>
+                      <TableHead className="text-[#B8B8D0]">Average Cost</TableHead>
+                      <TableHead className="text-[#B8B8D0]">Market Value</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {holdings.map((h) => (
+                      <TableRow key={h.symbol} className="border-[#4B3A6B]">
+                        <TableCell className="font-medium text-white">{h.symbol}</TableCell>
+                        <TableCell className="text-white">{h.quantity}</TableCell>
+                        <TableCell className="text-white">{formatCurrency(h.averageCost)}</TableCell>
+                        <TableCell className="text-white">{formatCurrency(h.marketValue)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
             </Card>
           )}
         </section>
@@ -495,43 +607,76 @@ export function Dashboard() {
                 No transactions yet.
               </CardContent>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-[#4B3A6B]">
-                    <TableHead className="text-[#B8B8D0]">Time</TableHead>
-                    <TableHead className="text-[#B8B8D0]">Type</TableHead>
-                    <TableHead className="text-[#B8B8D0]">Symbol</TableHead>
-                    <TableHead className="text-[#B8B8D0]">Quantity</TableHead>
-                    <TableHead className="text-[#B8B8D0]">Amount</TableHead>
-                    <TableHead className="text-[#B8B8D0]">Notes</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {transactions.map((tx) => (
-                    <TableRow key={tx.id} className="border-[#4B3A6B]">
-                      <TableCell className="text-[#B8B8D0] text-xs">
-                        {tx.time}
-                      </TableCell>
-                      <TableCell className="text-white">{tx.type}</TableCell>
-                      <TableCell className="text-white">{tx.symbol || "—"}</TableCell>
-                      <TableCell className="text-white">{tx.quantity || "—"}</TableCell>
-                      <TableCell
-                        className={
-                          tx.amount >= 0
-                            ? "text-emerald-400"
-                            : "text-rose-400"
-                        }
+              <>
+                <CardHeader className="py-4">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-white text-base">Recent Transactions</CardTitle>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={copyTransactionsToClipboard}
+                        className="border-[#4B3A6B] text-[#8B7EC8] hover:bg-[#8B7EC8]/20 h-8"
                       >
-                        {tx.amount >= 0 ? "+" : ""}
-                        {formatCurrency(tx.amount)}
-                      </TableCell>
-                      <TableCell className="text-[#B8B8D0] text-xs">
-                        {tx.notes}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                        {copiedTable === "transactions" ? (
+                          <Check className="h-4 w-4" />
+                        ) : (
+                          <Copy className="h-4 w-4" />
+                        )}
+                        <span className="ml-2">{copiedTable === "transactions" ? "Copied!" : "Copy"}</span>
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={downloadTransactionsAsCSV}
+                        className="border-[#4B3A6B] text-[#8B7EC8] hover:bg-[#8B7EC8]/20 h-8"
+                      >
+                        <Download className="h-4 w-4" />
+                        <span className="ml-2">CSV</span>
+                      </Button>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="p-0">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-[#4B3A6B]">
+                        <TableHead className="text-[#B8B8D0]">Time</TableHead>
+                        <TableHead className="text-[#B8B8D0]">Type</TableHead>
+                        <TableHead className="text-[#B8B8D0]">Symbol</TableHead>
+                        <TableHead className="text-[#B8B8D0]">Quantity</TableHead>
+                        <TableHead className="text-[#B8B8D0]">Amount</TableHead>
+                        <TableHead className="text-[#B8B8D0]">Notes</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {transactions.map((tx) => (
+                        <TableRow key={tx.id} className="border-[#4B3A6B]">
+                          <TableCell className="text-[#B8B8D0] text-xs">
+                            {tx.time}
+                          </TableCell>
+                          <TableCell className="text-white">{tx.type}</TableCell>
+                          <TableCell className="text-white">{tx.symbol || "—"}</TableCell>
+                          <TableCell className="text-white">{tx.quantity || "—"}</TableCell>
+                          <TableCell
+                            className={
+                              tx.amount >= 0
+                                ? "text-emerald-400"
+                                : "text-rose-400"
+                            }
+                          >
+                            {tx.amount >= 0 ? "+" : ""}
+                            {formatCurrency(tx.amount)}
+                          </TableCell>
+                          <TableCell className="text-[#B8B8D0] text-xs">
+                            {tx.notes}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </>
             )}
           </Card>
         </section>
